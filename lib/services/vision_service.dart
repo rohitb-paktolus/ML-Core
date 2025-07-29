@@ -1,9 +1,10 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 
-const String _apiKey = 'AIzaSyAX99H-C9-Aw6Rs-Z0H53Cgkq-zshZ3_ho'; // key
+final _apiKey = dotenv.env['GOOGLE_API_KEY'];
 
 Future<List<dynamic>> analyzeImage(XFile image) async {
   final String url = 'https://vision.googleapis.com/v1/images:annotate?key=$_apiKey';
