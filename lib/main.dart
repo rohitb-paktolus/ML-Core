@@ -1,4 +1,5 @@
 import 'package:ai_image_compare/src/dashboard/dashboard.dart';
+import 'package:ai_image_compare/src/home/home.dart';
 import 'package:ai_image_compare/src/splashScreen/splash_screen.dart';
 import 'package:ai_image_compare/utils/route.dart';
 import 'package:flutter/material.dart';
@@ -7,7 +8,13 @@ final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await dotenv.load(fileName: ".env");
+  try {
+    await dotenv.load(fileName: ".env");
+    print('Environment variables loaded successfully');
+  } catch (e) {
+    print('Error loading .env file: $e');
+    // Consider using fallback values or showing an error
+  }
   runApp(const MyApp());
 }
 
@@ -35,6 +42,10 @@ class MyApp extends StatelessWidget {
           case ROUT_SPLASH:
             return MaterialPageRoute(builder: (BuildContext context){
               return SafeArea(top: false, child: SplashScreen());
+            });
+          case ROUT_HOME:
+            return MaterialPageRoute(builder: (BuildContext context) {
+              return const SafeArea(top: true, child: Home());
             });
           case ROUT_DASHBOARD:
             return MaterialPageRoute(builder: (BuildContext context) {

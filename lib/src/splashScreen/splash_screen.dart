@@ -38,7 +38,7 @@ class _SplashScreenState extends State<SplashScreen>
     _controller.addStatusListener((status) {
       if (status == AnimationStatus.completed) {
         Future.delayed(const Duration(seconds: 2), () async {
-          Navigator.pushReplacementNamed(context, ROUT_DASHBOARD);
+          Navigator.pushReplacementNamed(context, ROUT_HOME);
         });
       }
     });
