@@ -1,6 +1,7 @@
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
@@ -136,7 +137,8 @@ class _HomeState extends State<Home> {
   void _initializeFeatures() {
     _mlFeatures = [
       _createBarcodeFeature(),
-      //_createFaceDetectionFeature(),
+      _createFaceDetectionFeature(),
+      _createTextRecognitionFeature(), // Add this line
       _compareImage(),
       // Add other features here
     ];
@@ -146,7 +148,23 @@ class _HomeState extends State<Home> {
     return {
       'title': 'Barcode Scanning',
       'icon': Icons.qr_code,
-      'action': () => _executeBarcodeScanning(),
+      'action': () => _processBarcodeScanning(), // Now returns Future<Map>
+    };
+  }
+
+  Map<String, dynamic> _createFaceDetectionFeature() {
+    return {
+      'title': 'Face Detection',
+      'icon': Icons.face,
+      'action': () => _processFaceDetection(),
+    };
+  }
+
+  Map<String, dynamic> _createTextRecognitionFeature() {
+    return {
+      'title': 'Text Recognition',
+      'icon': Icons.text_fields,
+      'action': _processTextRecognition,
     };
   }
 
@@ -158,19 +176,116 @@ class _HomeState extends State<Home> {
     };
   }
 
-  Future<Map<String, dynamic>?> _executeBarcodeScanning() async {
-    final inputImage = await _selectImageSource();
-    if (inputImage == null) return null;
+  Future<Map<String, dynamic>?> _processBarcodeScanning() async {
+    try {
+      final inputImage = await _selectImageSource();
+      if (inputImage == null) return null;
 
-    final barcodeScanner = BarcodeScanner();
-    final barcodes = await barcodeScanner.processImage(inputImage);
-    await barcodeScanner.close();
+      final barcodeScanner = BarcodeScanner();
+      final barcodes = await barcodeScanner.processImage(inputImage);
+      await barcodeScanner.close();
 
-    return {
-      'type': 'barcode',
-      'results': barcodes.map((barcode) => barcode.displayValue ?? 'No value').toList(),
-    };
+      return {
+        'type': 'barcode',
+        'results': barcodes.map((barcode) => barcode.displayValue ?? 'No value').toList(),
+      };
+    } catch (e) {
+      debugPrint('Barcode scanning error: $e');
+      return {
+        'type': 'barcode',
+        'error': e.toString(),
+      };
+    }
   }
+
+
+  Future<Map<String, dynamic>?> _processFaceDetection() async {
+    try {
+      final inputImage = await _selectImageSource();
+      if (inputImage == null) return null;
+
+      final options = FaceDetectorOptions(performanceMode: FaceDetectorMode.fast);
+      final faceDetector = FaceDetector(options: options);
+      final faces = await faceDetector.processImage(inputImage);
+      await faceDetector.close();
+
+      return {
+        'type': 'face',
+        'results': faces.map((face) {
+          return {
+            'boundingBox': face.boundingBox,
+            'landmarks': face.landmarks.entries.map((entry) {
+              return {
+                'type': entry.key.toString(),
+                'position': {
+                  'x': entry.value?.position.x,
+                  'y': entry.value?.position.y,
+                }
+              };
+            }).toList(),
+            'headEulerAngleY': face.headEulerAngleY,
+            'headEulerAngleZ': face.headEulerAngleZ,
+          };
+        }).toList(),
+      };
+    }catch (e) {
+      debugPrint('Face detection error: $e');
+      return {
+        'type': 'face',
+        'error': e.toString(),
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>?> _processTextRecognition() async {
+    try {
+      final inputImage = await _selectImageSource();
+      if (inputImage == null) return null;
+
+      setState(() => _currentDetection = 'Processing text...');
+      final textBlocks = await recognizeText(inputImage as XFile);
+
+      return {
+        'type': 'text',
+        'results': textBlocks,
+        'fullText': textBlocks.map((block) => block['text']).join('\n'),
+      };
+    } catch (e) {
+      debugPrint('Text recognition error: $e');
+      return {
+        'type': 'text',
+        'error': e.toString(),
+      };
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> recognizeText(XFile imageFile) async {
+    final inputImage = InputImage.fromFilePath(imageFile.path);
+    final textRecognizer = TextRecognizer(script: TextRecognitionScript.latin); // For Latin scripts
+
+    try {
+      final RecognizedText recognizedText = await textRecognizer.processImage(inputImage);
+      final List<Map<String, dynamic>> textBlocks = [];
+
+      for (TextBlock block in recognizedText.blocks) {
+        textBlocks.add({
+          'text': block.text,
+          'language': block.recognizedLanguages.isNotEmpty
+              ? block.recognizedLanguages.first
+              : 'Unknown',
+          'boundingBox': block.boundingBox,
+        });
+      }
+
+      await textRecognizer.close();
+      return textBlocks;
+    } catch (e) {
+      await textRecognizer.close();
+      debugPrint('Text recognition error: $e');
+      rethrow;
+    }
+  }
+
   Future<void> _requestPermissions() async {
     await [Permission.camera, Permission.photos].request();
   }
@@ -226,6 +341,117 @@ class _HomeState extends State<Home> {
     }
   }
 
+  void _showResultsDialog(Map<String, dynamic> results) {
+    final type = results['type'];
+    final resultData = results['results'];
+
+    if (type == 'barcode') {
+      _showBarcodeResults(resultData as List<String>);
+    } else if (type == 'face') {
+      _showFaceResults(resultData as List<dynamic>);
+    } else if(type == 'text') {
+      _showTextResults(results);
+    }
+  }
+
+  void _showBarcodeResults(List<String> barcodes) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Barcode Results'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (barcodes.isEmpty)
+              const Text('No barcodes detected')
+            else
+              ...barcodes.map((code) => Text(code)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showFaceResults(List<dynamic> faces) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('${faces.length} Face(s) Detected'),
+        content: SingleChildScrollView(
+          child: Column(
+            children: [
+              for (final face in faces)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12.0),
+                    child: _buildFaceInfo(face),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showTextResults(Map<String, dynamic> results) {
+    final fullText = results['fullText'] as String;
+    final textBlocks = results['results'] as List<dynamic>;
+
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Detected Text'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Full Text:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(fullText),
+              const SizedBox(height: 16),
+              const Text('Text Blocks:', style: TextStyle(fontWeight: FontWeight.bold)),
+              ...textBlocks.map((block) => Padding(
+                padding: const EdgeInsets.only(top: 8.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(block['text']),
+                    Text(
+                      'Confidence: ${(block['confidence'] * 100).toStringAsFixed(1)}%',
+                      style: const TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
+                  ],
+                ),
+              )),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+          IconButton(
+            icon: const Icon(Icons.copy),
+            tooltip: 'Copy to clipboard',
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: fullText));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Text copied to clipboard')),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
   @override
   void dispose() {
     _cameraController.dispose();
@@ -272,10 +498,12 @@ class _HomeState extends State<Home> {
                   onTap: () async {
                     setState(() => _currentDetection = 'Processing ${feature['title']}...');
                     final results = await feature['action']();
+
                     setState(() {
                       if (results != null) {
                         _lastResults.add(results);
                         _currentDetection = '${feature['title']} completed';
+                        _showResultsDialog(results);
                       } else {
                         _currentDetection = '${feature['title']} canceled';
                       }
@@ -299,3 +527,43 @@ class _HomeState extends State<Home> {
     );
   }
 }
+
+Widget _buildFaceInfo(Map<String, dynamic> face) {
+  // Convert angles to human-readable directions
+  String getHeadDirection(double? yAngle, double? zAngle) {
+    if (yAngle == null || zAngle == null) return 'Facing forward';
+
+    if (yAngle.abs() > 30) {
+      return yAngle > 0 ? 'Looking right' : 'Looking left';
+    } else if (zAngle.abs() > 15) {
+      return zAngle > 0 ? 'Looking up' : 'Looking down';
+    }
+    return 'Facing forward';
+  }
+
+  // Count visible landmarks
+  final landmarkCount = face['landmarks']?.length ?? 0;
+  final hasSmile = face['smilingProbability'] != null
+      && face['smilingProbability'] > 0.7;
+  final leftEyeOpen = face['leftEyeOpenProbability'] != null
+      && face['leftEyeOpenProbability'] > 0.7;
+  final rightEyeOpen = face['rightEyeOpenProbability'] != null
+      && face['rightEyeOpenProbability'] > 0.7;
+
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text('Face detected', style: TextStyle(fontWeight: FontWeight.bold)),
+      SizedBox(height: 4),
+      Text('• ${getHeadDirection(face['headEulerAngleY'], face['headEulerAngleZ'])}'),
+      Text('• ${landmarkCount} facial features detected'),
+      if (hasSmile) Text('• Person is smiling'),
+      if (leftEyeOpen && rightEyeOpen)
+        Text('• Eyes are open'),
+      if (!leftEyeOpen || !rightEyeOpen)
+        Text('• Eyes are ${!leftEyeOpen && !rightEyeOpen ? 'closed' : 'partially open'}'),
+      SizedBox(height: 8),
+    ],
+  );
+}
+
