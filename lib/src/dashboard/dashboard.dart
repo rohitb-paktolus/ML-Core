@@ -47,7 +47,7 @@ class _DashboardState extends State<Dashboard> {
     }
   }
 
-  Future<void> _captureImage(bool isBeforeImage) async {
+  /*Future<void> _captureImage(bool isBeforeImage) async {
     if (!_permissionGranted) {
       await _requestCameraPermission();
       if (!_permissionGranted) return;
@@ -74,6 +74,67 @@ class _DashboardState extends State<Dashboard> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Error capturing image: $e')));
+    }
+  }
+*/
+
+  // Updated _captureImage function
+  Future<void> _captureImage(bool isBeforeImage) async {
+    if (!_permissionGranted) {
+      await _requestCameraPermission();
+      if (!_permissionGranted) return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text("Select Source"),
+          content: const Text("Choose image from:"),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _pickImageFromSource(ImageSource.camera, isBeforeImage);
+              },
+              child: const Text("Camera"),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _pickImageFromSource(ImageSource.gallery, isBeforeImage);
+              },
+              child: const Text("Gallery"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Helper function to pick image from source
+  Future<void> _pickImageFromSource(ImageSource source, bool isBeforeImage) async {
+    try {
+      final XFile? pickedFile = await _picker.pickImage(
+        source: source,
+        imageQuality: 85,
+        preferredCameraDevice: CameraDevice.rear,
+      );
+
+      if (pickedFile != null) {
+        setState(() {
+          if (isBeforeImage) {
+            _beforeImage = File(pickedFile.path);
+          } else {
+            _afterImage = File(pickedFile.path);
+          }
+          _cleanlinessStatus = '';
+        });
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error picking image: $e')),
+      );
     }
   }
 

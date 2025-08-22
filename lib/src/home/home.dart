@@ -1,7 +1,10 @@
 
+import 'dart:convert';
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
@@ -9,12 +12,13 @@ import 'package:google_mlkit_object_detection/google_mlkit_object_detection.dart
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:google_mlkit_selfie_segmentation/google_mlkit_selfie_segmentation.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:google_ml_kit/google_ml_kit.dart';
-
+import 'package:translator/translator.dart';
 import '../../utils/route.dart';
 
 class Home extends StatefulWidget {
@@ -36,7 +40,7 @@ class _HomeState extends State<Home> {
   XFile? _selectedImage;
   // Initialize _mlFeatures in initState
   late final List<Map<String, dynamic>> _mlFeatures;
-
+  final _apiKey = dotenv.env['GOOGLE_API_KEY'];
   // Get image from camera
   Future<InputImage> _getImageFromCamera() async {
     try {
@@ -164,7 +168,7 @@ class _HomeState extends State<Home> {
     return {
       'title': 'Text Recognition',
       'icon': Icons.text_fields,
-      'action': _processTextRecognition,
+      'action': _processTextRecognitionWithTranslation,
     };
   }
 
@@ -237,25 +241,116 @@ class _HomeState extends State<Home> {
     }
   }
 
-  Future<Map<String, dynamic>?> _processTextRecognition() async {
+  Future<Map<String, dynamic>?> _processTextRecognitionWithTranslation() async {
     try {
       final inputImage = await _selectImageSource();
       if (inputImage == null) return null;
 
       setState(() => _currentDetection = 'Processing text...');
-      final textBlocks = await recognizeText(inputImage as XFile);
+
+      // Recognize text from image
+      final textBlocks = await recognizeText(XFile(inputImage.filePath!));
+      final fullText = textBlocks.map((block) => block['text']).join('\n');
+
+      if (fullText.isEmpty) {
+        return {
+          'type': 'text',
+          'error': 'No text detected in the image',
+        };
+      }
+
+      // Detect language and translate to Marathi
+      setState(() => _currentDetection = 'Translating to Marathi...');
+      final detectedLanguage = await _detectLanguage(fullText);
+      final translatedText = await _translateToMarathi(fullText);
 
       return {
         'type': 'text',
+        'fullText': fullText,
+        'translatedText': translatedText,
+        'detectedLanguage': detectedLanguage,
         'results': textBlocks,
-        'fullText': textBlocks.map((block) => block['text']).join('\n'),
       };
     } catch (e) {
-      debugPrint('Text recognition error: $e');
+      debugPrint('Text recognition with translation error: $e');
       return {
         'type': 'text',
         'error': e.toString(),
       };
+    }
+  }
+
+  Future<String> _detectLanguage(String text) async {
+    try {
+      // Simple language detection based on character ranges
+      if (text.contains(RegExp(r'[ऀ-ॿ]'))) {
+        return 'Marathi';
+      } else if (text.contains(RegExp(r'[अ-ह]'))) {
+        return 'Hindi';
+      } else if (text.contains(RegExp(r'[a-zA-Z]'))) {
+        return 'English';
+      }
+
+      // Fallback to Google Translate language detection
+      return await _detectLanguageWithAPI(text);
+    } catch (e) {
+      debugPrint('Language detection error: $e');
+      return 'Unknown';
+    }
+  }
+
+
+  Future<String> _detectLanguageWithAPI(String text) async {
+    try {
+      final response = await http.post(
+        Uri.parse('https://translation.googleapis.com/language/translate/v2/detect'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'q': text,
+          'key': _apiKey,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final languageCode = data['data']['detections'][0][0]['language'];
+        return _getLanguageName(languageCode);
+      }
+      return 'Unknown';
+    } catch (e) {
+      return 'Unknown';
+    }
+  }
+
+  String _getLanguageName(String languageCode) {
+    final languageMap = {
+      'en': 'English',
+      'mr': 'Marathi',
+      'hi': 'Hindi',
+      'es': 'Spanish',
+      'fr': 'French',
+      'de': 'German',
+      'it': 'Italian',
+      'pt': 'Portuguese',
+      'ru': 'Russian',
+      'zh': 'Chinese',
+      'ja': 'Japanese',
+      'ko': 'Korean',
+      'ar': 'Arabic',
+    };
+    return languageMap[languageCode] ?? languageCode;
+  }
+
+  Future<String> _translateToMarathi(String text) async {
+    try {
+      final translation = await GoogleTranslator().translate(
+        text,
+        to: 'mr', // Marathi
+      );
+      return translation.text;
+    } catch (e) {
+      debugPrint('Translation error: $e');
+      throw Exception('Failed to translate text: $e');
     }
   }
 
@@ -400,58 +495,106 @@ class _HomeState extends State<Home> {
     );
   }
 
-  void _showTextResults(Map<String, dynamic> results) {
-    final fullText = results['fullText'] as String;
-    final textBlocks = results['results'] as List<dynamic>;
-
+  void _showErrorDialog(String errorMessage) {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Detected Text'),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Full Text:', style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              Text(fullText),
-              const SizedBox(height: 16),
-              const Text('Text Blocks:', style: TextStyle(fontWeight: FontWeight.bold)),
-              ...textBlocks.map((block) => Padding(
-                padding: const EdgeInsets.only(top: 8.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(block['text']),
-                    Text(
-                      'Confidence: ${(block['confidence'] * 100).toStringAsFixed(1)}%',
-                      style: const TextStyle(color: Colors.grey, fontSize: 12),
-                    ),
-                  ],
-                ),
-              )),
-            ],
-          ),
-        ),
+        title: const Text('Error'),
+        content: Text(errorMessage),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('OK'),
           ),
+        ],
+      ),
+    );
+  }
+
+  void _showTextResults(Map<String, dynamic> results) {
+    if (results.containsKey('error')) {
+      _showErrorDialog(results['error']);
+      return;
+    }
+
+    final fullText = results['fullText']?.toString() ?? 'No text detected';
+    final translatedText = results['translatedText']?.toString() ?? 'Translation not available';
+    final detectedLanguage = results['detectedLanguage']?.toString() ?? 'Unknown';
+    final textBlocks = results['results'] as List<dynamic>? ?? [];
+
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Text Recognition Results'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Detected Language
+              Row(
+                children: [
+                  const Icon(Icons.language, size: 16, color: Colors.blue),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Detected Language: $detectedLanguage',
+                    style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // Original Text
+              const Text('Original Text:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(fullText),
+              const SizedBox(height: 16),
+
+              // Marathi Translation
+              const Text('Marathi Translation:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(
+                translatedText,
+                style: const TextStyle(fontSize: 16, color: Colors.green),
+              ),
+              const SizedBox(height: 16),
+            ],
+          ),
+        ),
+        actions: [
+          // Copy Original Text
           IconButton(
-            icon: const Icon(Icons.copy),
-            tooltip: 'Copy to clipboard',
+            icon: const Icon(Icons.copy, size: 20),
+            tooltip: 'Copy original text',
             onPressed: () {
               Clipboard.setData(ClipboardData(text: fullText));
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Text copied to clipboard')),
+                const SnackBar(content: Text('Original text copied')),
               );
             },
+          ),
+
+          // Copy Translation
+          IconButton(
+            icon: const Icon(Icons.translate, size: 20),
+            tooltip: 'Copy translation',
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: translatedText));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Translation copied')),
+              );
+            },
+          ),
+
+          // OK Button
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
           ),
         ],
       ),
     );
   }
+
   @override
   void dispose() {
     _cameraController.dispose();
